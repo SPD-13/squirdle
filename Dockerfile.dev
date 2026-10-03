@@ -1,0 +1,7 @@
+# Development/test image: Node + Playwright with Chromium preinstalled.
+FROM mcr.microsoft.com/playwright:v1.63.0-noble
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+CMD ["npm", "test"]

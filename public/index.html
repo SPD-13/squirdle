@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#121213">
+  <meta name="color-scheme" content="dark">
+  <title>Squirdle</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="header">
+    <h1 class="title">Squirdle</h1>
+  </header>
+  <main class="game">
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <div class="board-container" id="board-container">
+      <div class="board" id="board" role="grid" aria-label="Board"></div>
+    </div>
+    <div class="keyboard" id="keyboard" role="group" aria-label="Keyboard"></div>
+  </main>
+</body>
+</html>
