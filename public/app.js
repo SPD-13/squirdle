@@ -1,12 +1,22 @@
 import {
+  answerFor,
   answerForDay,
+  dateForDay,
   dayIndex,
+  gameResult,
+  guessesFor,
   keyStates,
+  makeSchedule,
   maxGuesses,
+  parsePuzzle,
   parseWords,
+  puzzleNumber,
+  puzzleSearch,
+  randomIndex,
+  readState,
   scoreGuess,
-  seededShuffle,
   winMessage,
+  withGuesses,
 } from './logic.js';
 
 const STORAGE_KEY = 'squirdle-state';
@@ -28,10 +38,34 @@ const els = {
   boardContainer: document.getElementById('board-container'),
   keyboard: document.getElementById('keyboard'),
   toasts: document.getElementById('toasts'),
+  subtitle: document.getElementById('subtitle'),
+  archiveButton: document.getElementById('archive-button'),
+  randomButton: document.getElementById('random-button'),
+  archive: document.getElementById('archive'),
+  archiveList: document.getElementById('archive-list'),
+  archiveClose: document.getElementById('archive-close'),
 };
 
+// Calendar dates of puzzle days (dateForDay returns UTC midnight).
+const dateFormat = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+});
+const dateWithYearFormat = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'UTC',
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
+
+let words = [];
+let schedule = null;
+
 const game = {
-  day: 0,
+  puzzle: null, // { kind: 'daily', day } or { kind: 'random', index }
   answer: '',
   rows: 0,
   valid: new Set(),
@@ -43,22 +77,129 @@ const game = {
 
 // ---------- storage ----------
 
-function loadGuesses(day) {
+function loadState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved && saved.day === day && Array.isArray(saved.guesses)) return saved.guesses;
+    return readState(localStorage.getItem(STORAGE_KEY));
   } catch {
-    // Storage unavailable or corrupt: start fresh.
+    // Storage unavailable: start fresh.
+    return readState(null);
   }
-  return [];
 }
 
 function saveGuesses() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ day: game.day, guesses: game.guesses }));
+    const state = withGuesses(loadState(), game.puzzle, game.guesses);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Ignore: progress just won't survive a reload.
   }
+}
+
+// ---------- header ----------
+
+function formatDay(day, today) {
+  const date = dateForDay(day);
+  const sameYear = date.getUTCFullYear() === dateForDay(today).getUTCFullYear();
+  return (sameYear ? dateFormat : dateWithYearFormat).format(date);
+}
+
+function todayLink() {
+  const a = document.createElement('a');
+  a.href = './';
+  a.textContent = 'Back to today';
+  return a;
+}
+
+function renderHeader(today) {
+  const { puzzle } = game;
+  els.subtitle.replaceChildren();
+  if (puzzle.kind === 'random') {
+    els.subtitle.append('Random · ', todayLink());
+  } else if (puzzle.day === today) {
+    els.subtitle.append(`#${puzzleNumber(puzzle.day)} · ${formatDay(puzzle.day, today)}`);
+  } else {
+    els.subtitle.append(`#${puzzleNumber(puzzle.day)} · ${formatDay(puzzle.day, today)} · `, todayLink());
+  }
+}
+
+function resultLabel({ status, used, rows }) {
+  switch (status) {
+    case 'won':
+      return [`✓ ${used}/${rows}`, `solved in ${used} of ${rows} guesses`];
+    case 'lost':
+      return ['✗', 'not solved'];
+    case 'playing':
+      return [`… ${used}/${rows}`, `in progress, ${used} of ${rows} guesses used`];
+    default:
+      return ['', 'not played'];
+  }
+}
+
+function archiveRow(day, today, state) {
+  const a = document.createElement('a');
+  a.className = 'archive-day';
+  a.href = `./${puzzleSearch({ kind: 'daily', day }, today)}`;
+  if (game.puzzle.kind === 'daily' && game.puzzle.day === day) a.setAttribute('aria-current', 'page');
+
+  const number = document.createElement('span');
+  number.className = 'archive-number';
+  number.textContent = `#${puzzleNumber(day)}`;
+
+  const date = document.createElement('span');
+  date.className = 'archive-date';
+  date.textContent = day === today ? 'Today' : formatDay(day, today);
+
+  const result = gameResult(state.daily[day] ?? [], answerForDay(schedule.daily, day));
+  const [shown, spoken] = resultLabel(result);
+  const status = document.createElement('span');
+  status.className = 'archive-result';
+  status.dataset.status = result.status;
+  const visible = document.createElement('span');
+  visible.setAttribute('aria-hidden', 'true');
+  visible.textContent = shown;
+  const hidden = document.createElement('span');
+  hidden.className = 'sr-only';
+  hidden.textContent = spoken;
+  status.append(visible, hidden);
+
+  a.append(number, date, status);
+  const li = document.createElement('li');
+  li.append(a);
+  return li;
+}
+
+// Built fresh on every open, so a rollover since the page loaded shows up.
+function openArchive() {
+  const today = dayIndex();
+  const state = loadState();
+  const rows = [];
+  for (let day = today; day >= 0; day--) rows.push(archiveRow(day, today, state));
+  els.archiveList.replaceChildren(...rows);
+  els.archive.showModal();
+  els.archiveList.querySelector('[aria-current]')?.scrollIntoView({ block: 'center' });
+}
+
+function playRandom() {
+  const avoid = game.puzzle.kind === 'random' ? game.puzzle.index : -1;
+  location.assign(`./?random=${randomIndex(words.length, avoid)}`);
+}
+
+function bindHeader() {
+  els.archiveButton.addEventListener('click', () => {
+    els.archiveButton.blur();
+    openArchive();
+  });
+  els.randomButton.addEventListener('click', () => {
+    els.randomButton.blur();
+    playRandom();
+  });
+  els.archiveClose.addEventListener('click', () => els.archive.close());
+  // A click on the dialog element itself (not its panel) is a click on the backdrop.
+  els.archive.addEventListener('click', (e) => {
+    if (e.target === els.archive) els.archive.close();
+  });
+  els.archiveButton.disabled = false;
+  els.randomButton.disabled = false;
 }
 
 // ---------- rendering ----------
@@ -251,7 +392,8 @@ function showResult(row, animate) {
 }
 
 function isOver() {
-  return game.guesses.includes(game.answer) || game.guesses.length >= game.rows;
+  const { status } = gameResult(game.guesses, game.answer);
+  return status === 'won' || status === 'lost';
 }
 
 async function submit() {
@@ -284,7 +426,7 @@ async function submit() {
 }
 
 function handleKey(key) {
-  if (game.busy || game.over || !game.answer) return;
+  if (game.busy || game.over || !game.answer || els.archive.open) return;
   if (key === 'ENTER') {
     submit();
   } else if (key === 'BACKSPACE') {
@@ -307,6 +449,8 @@ function bindInput() {
   });
 
   document.addEventListener('keydown', (e) => {
+    // Leave keys alone while the archive is open (Enter follows links, Escape closes it).
+    if (els.archive.open) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     let key = null;
     if (e.key === 'Enter') key = 'ENTER';
@@ -324,7 +468,6 @@ async function init() {
   bindInput();
   new ResizeObserver(sizeBoard).observe(els.boardContainer);
 
-  let words;
   try {
     const res = await fetch('words.txt', { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -335,15 +478,25 @@ async function init() {
     return;
   }
 
-  game.day = dayIndex();
-  game.answer = answerForDay(seededShuffle(words), game.day);
+  schedule = makeSchedule(words);
+  const today = dayIndex();
+  game.puzzle = parsePuzzle(location.search, today, words.length);
+  // Show the canonical URL, e.g. a future ?day= becomes plain today.
+  const search = puzzleSearch(game.puzzle, today);
+  if (location.search !== search) {
+    history.replaceState(null, '', location.pathname + search + location.hash);
+  }
+
+  game.answer = answerFor(game.puzzle, schedule);
   game.rows = maxGuesses(game.answer);
   game.valid = new Set(words.filter((w) => w.length === game.answer.length));
-  game.guesses = loadGuesses(game.day)
+  game.guesses = guessesFor(loadState(), game.puzzle)
     .filter((g) => game.valid.has(g))
     .slice(0, game.rows);
   game.over = isOver();
 
+  renderHeader(today);
+  bindHeader();
   buildBoard();
   game.guesses.forEach((_, r) => renderSubmittedRow(r));
   renderKeyboard();

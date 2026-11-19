@@ -2,6 +2,8 @@
 
 // Changing either constant (or the contents of words.txt) changes the whole schedule.
 export const SEED = 20261003;
+// Order of the random puzzles. Changing it (or words.txt) changes where every ?random=N link points.
+export const RANDOM_SEED = 20261119;
 // Calendar date whose 6 AM (in the player's own time zone) starts day index 0.
 export const EPOCH = { year: 2026, month: 10, day: 3 };
 export const ROLLOVER_HOUR = 6;
@@ -77,6 +79,60 @@ export function answerForDay(shuffled, day) {
   return shuffled[((day % n) + n) % n];
 }
 
+// Midnight UTC on the calendar date of a puzzle day. Format it with timeZone 'UTC'.
+export function dateForDay(day) {
+  return new Date(Date.UTC(EPOCH.year, EPOCH.month - 1, EPOCH.day) + day * DAY_MS);
+}
+
+// Answer lists for both kinds of puzzle; build once, then pass to answerFor.
+export function makeSchedule(words) {
+  return { daily: seededShuffle(words, SEED), random: seededShuffle(words, RANDOM_SEED) };
+}
+
+export function answerFor(puzzle, schedule) {
+  if (puzzle.kind === 'random') return schedule.random[puzzle.index];
+  return answerForDay(schedule.daily, puzzle.day);
+}
+
+// Players see daily puzzles numbered from 1 (header, archive, ?day=); internally
+// `day` is the 0-based day index used by the schedule and saved progress.
+export function puzzleNumber(day) {
+  return day + 1;
+}
+
+const WHOLE_NUMBER = /^\d{1,9}$/;
+
+// The puzzle a page's query string asks for:
+//   ?random=N  random puzzle N (0 <= N < wordCount)
+//   ?day=N     daily puzzle number N (1 <= N <= today's number)
+// Anything else, including future days, means today's daily.
+export function parsePuzzle(search, today, wordCount) {
+  const params = new URLSearchParams(search);
+  const random = params.get('random');
+  if (random !== null && WHOLE_NUMBER.test(random) && Number(random) < wordCount) {
+    return { kind: 'random', index: Number(random) };
+  }
+  const day = params.get('day');
+  const number = day !== null && WHOLE_NUMBER.test(day) ? Number(day) : 0;
+  if (number >= 1 && number <= puzzleNumber(today)) {
+    return { kind: 'daily', day: number - 1 };
+  }
+  return { kind: 'daily', day: today };
+}
+
+// The canonical query string for a puzzle ('' for today's daily).
+export function puzzleSearch(puzzle, today) {
+  if (puzzle.kind === 'random') return `?random=${puzzle.index}`;
+  return puzzle.day === today ? '' : `?day=${puzzleNumber(puzzle.day)}`;
+}
+
+// A uniformly random index below `count`, never equal to `avoid` (when there is a choice).
+export function randomIndex(count, avoid = -1, rand = Math.random) {
+  if (count < 2 || avoid < 0 || avoid >= count) return Math.floor(rand() * count);
+  const i = Math.floor(rand() * (count - 1));
+  return i >= avoid ? i + 1 : i;
+}
+
 export function maxGuesses(answer) {
   return answer.length + 1;
 }
@@ -101,6 +157,61 @@ export function scoreGuess(guess, answer) {
     }
   }
   return result;
+}
+
+// Where a game stands: status is 'unplayed', 'playing', 'won' or 'lost'; `used` is how
+// many of the `rows` allowed guesses have been made.
+export function gameResult(guesses, answer) {
+  const rows = maxGuesses(answer);
+  const made = guesses.slice(0, rows);
+  const win = made.indexOf(answer);
+  if (win >= 0) return { status: 'won', used: win + 1, rows };
+  if (made.length >= rows) return { status: 'lost', used: rows, rows };
+  return { status: made.length ? 'playing' : 'unplayed', used: made.length, rows };
+}
+
+// ---------- saved progress ----------
+// Stored as JSON: { daily: { [day]: guesses }, random: { index, guesses } | null }.
+// Only the latest random game is kept.
+
+const isGuessList = (g) => Array.isArray(g) && g.every((w) => typeof w === 'string');
+
+// Parses stored progress. Also accepts the original format ({ day, guesses }, which
+// only held one day) and returns empty progress for anything missing or corrupt.
+export function readState(raw) {
+  const state = { daily: {}, random: null };
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return state;
+  }
+  if (!data || typeof data !== 'object') return state;
+  if (Number.isInteger(data.day) && isGuessList(data.guesses)) {
+    state.daily[data.day] = data.guesses;
+    return state;
+  }
+  if (data.daily && typeof data.daily === 'object') {
+    for (const [day, guesses] of Object.entries(data.daily)) {
+      if (/^-?\d+$/.test(day) && isGuessList(guesses)) state.daily[day] = guesses;
+    }
+  }
+  const r = data.random;
+  if (r && Number.isInteger(r.index) && isGuessList(r.guesses)) {
+    state.random = { index: r.index, guesses: r.guesses };
+  }
+  return state;
+}
+
+export function guessesFor(state, puzzle) {
+  if (puzzle.kind === 'random') return state.random?.index === puzzle.index ? state.random.guesses : [];
+  return state.daily[puzzle.day] ?? [];
+}
+
+// A copy of `state` with `guesses` recorded for `puzzle`.
+export function withGuesses(state, puzzle, guesses) {
+  if (puzzle.kind === 'random') return { ...state, random: { index: puzzle.index, guesses } };
+  return { ...state, daily: { ...state.daily, [puzzle.day]: guesses } };
 }
 
 const RANK = { absent: 1, present: 2, correct: 3 };

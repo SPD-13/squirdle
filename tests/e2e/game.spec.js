@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { answerForDay, parseWords, seededShuffle } from '../../public/logic.js';
+import { answerForDay, makeSchedule, parseWords, seededShuffle } from '../../public/logic.js';
 
 const words = parseWords(readFileSync(new URL('../../public/words.txt', import.meta.url), 'utf8'));
 const shuffled = seededShuffle(words);
 const answerOn = (day) => answerForDay(shuffled, day);
+const randomAnswer = (index) => makeSchedule(words).random[index];
 const firstDayWithLength = (len) => {
   for (let d = 0; d < shuffled.length; d++) if (answerOn(d).length === len) return d;
   throw new Error(`no answer of length ${len}`);
@@ -188,4 +189,154 @@ test('a puzzle started before 6 AM can be finished after it', async ({ page }) =
   await typeGuess(page, answer);
   await expectRowRevealed(page, 1, answer);
   await expect(toast(page, /./)).toBeVisible();
+});
+
+// ---------- archive and random puzzles ----------
+
+async function openUrl(page, today, url, answer) {
+  await page.clock.setFixedTime(noonOfDay(today));
+  await page.goto(url);
+  await expect(page.locator('.row')).toHaveCount(answer.length + 1);
+}
+
+const subtitle = (page) => page.locator('#subtitle');
+const archiveRows = (page) => page.locator('#archive-list .archive-day');
+
+test('?day= opens a past puzzle', async ({ page }) => {
+  const answer = answerOn(2);
+  await openUrl(page, 5, '/?day=3', answer);
+  await expect(subtitle(page)).toHaveText('#3 · Mon, Oct 5 · Back to today');
+
+  await typeGuess(page, answer);
+  await expectRowRevealed(page, 0, answer);
+  await expect(toast(page, 'Genius')).toBeVisible();
+
+  await page.getByRole('link', { name: 'Back to today' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('.row')).toHaveCount(answerOn(5).length + 1);
+  await expect(subtitle(page)).toHaveText('#6 · Thu, Oct 8');
+});
+
+test('future or malformed ?day= falls back to today', async ({ page }) => {
+  for (const url of ['/?day=5', '/?day=0', '/?day=abc', '/?random=99999']) {
+    await openUrl(page, 3, url, answerOn(3));
+    await expect(page).toHaveURL(/\/$/);
+    await expect(subtitle(page)).toHaveText('#4 · Tue, Oct 6');
+  }
+  await typeGuess(page, answerOn(3));
+  await expect(toast(page, 'Genius')).toBeVisible();
+});
+
+test('archive lists past days with results and opens them', async ({ page }) => {
+  // Day index 4 (#5, today): won in one. Index 1 (#2): one wrong guess. Others: not played.
+  const today = 4;
+  await openUrl(page, today, '/', answerOn(today));
+  await typeGuess(page, answerOn(today));
+  await expectRowRevealed(page, 0, answerOn(today));
+
+  await openUrl(page, today, '/?day=2', answerOn(1));
+  await typeGuess(page, wrongGuess(answerOn(1)));
+  await expectRowRevealed(page, 0, wrongGuess(answerOn(1)));
+
+  await page.locator('#archive-button').click();
+  const dialog = page.getByRole('dialog', { name: 'Past puzzles' });
+  await expect(dialog).toBeVisible();
+  await expect(archiveRows(page)).toHaveCount(5);
+  const rows = 'archive-result';
+  const rowFor = (day) => archiveRows(page).filter({ hasText: `#${day + 1}` });
+  await expect(rowFor(4)).toContainText('Today');
+  await expect(rowFor(4).locator(`.${rows}`)).toHaveText(`✓ 1/${answerOn(4).length + 1}solved in 1 of ${answerOn(4).length + 1} guesses`);
+  await expect(rowFor(1).locator(`.${rows}`)).toHaveAttribute('data-status', 'playing');
+  await expect(rowFor(1)).toHaveAttribute('aria-current', 'page');
+  await expect(rowFor(0)).toContainText('Sat, Oct 3');
+  await expect(rowFor(0).locator(`.${rows}`)).toHaveAttribute('data-status', 'unplayed');
+  // No answers in the list.
+  for (let d = 0; d <= today; d++) await expect(dialog).not.toContainText(answerOn(d));
+  await page.screenshot({ path: 'test-results/screens/archive.png' });
+
+  // Typing while it's open doesn't reach the board; Escape closes it.
+  await page.keyboard.type('ab');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(row(page, 1).locator('.tile').first()).toHaveText('');
+
+  // Pick the first puzzle (#1).
+  await page.locator('#archive-button').click();
+  await rowFor(0).click();
+  await expect(page).toHaveURL(/\?day=1$/);
+  await expect(page.locator('.row')).toHaveCount(answerOn(0).length + 1);
+  await expect(subtitle(page)).toContainText('#1 · Sat, Oct 3');
+
+  // Today's row goes back to plain /.
+  await page.locator('#archive-button').click();
+  await rowFor(4).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expectRowRevealed(page, 0, answerOn(4));
+});
+
+test('random puzzle: new one from the dice, kept on reload', async ({ page }) => {
+  await openUrl(page, 0, '/', answerOn(0));
+  await page.locator('#random-button').click();
+  await expect(page).toHaveURL(/\?random=\d+$/);
+  const index = Number(new URL(page.url()).searchParams.get('random'));
+  const answer = randomAnswer(index);
+  await expect(page.locator('.row')).toHaveCount(answer.length + 1);
+  await expect(subtitle(page)).toHaveText('Random · Back to today');
+
+  const guess = wrongGuess(answer);
+  await typeGuess(page, guess);
+  await expectRowRevealed(page, 0, guess);
+  await page.reload();
+  await expectRowRevealed(page, 0, guess);
+
+  await typeGuess(page, answer);
+  await expectRowRevealed(page, 1, answer);
+
+  // Another roll is a different puzzle; the daily is untouched.
+  await page.locator('#random-button').click();
+  await expect(page).not.toHaveURL(new RegExp(`random=${index}$`));
+  await page.goto('/');
+  await expect(row(page, 0).locator('.tile').first()).toHaveAttribute('data-state', 'empty');
+});
+
+test('progress saved by the previous version is kept', async ({ page }) => {
+  const answer = answerOn(2);
+  const guess = wrongGuess(answer);
+  await openUrl(page, 2, '/', answer);
+  await page.evaluate((g) => localStorage.setItem('squirdle-state', JSON.stringify({ day: 2, guesses: [g] })), guess);
+  await page.reload();
+  await expectRowRevealed(page, 0, guess);
+
+  // Playing another day no longer wipes it.
+  await openUrl(page, 2, '/?day=2', answerOn(1));
+  await typeGuess(page, wrongGuess(answerOn(1)));
+  await expectRowRevealed(page, 0, wrongGuess(answerOn(1)));
+  await page.goto('/');
+  await expectRowRevealed(page, 0, guess);
+});
+
+test('a long archive scrolls in one place: the list, not the dialog or page', async ({ page }) => {
+  const today = 60;
+  await openUrl(page, today, '/', answerOn(today));
+  await page.locator('#archive-button').click();
+  await expect(archiveRows(page)).toHaveCount(today + 1);
+
+  const sizes = await page.evaluate(() => {
+    const box = (el) => ({ scroll: el.scrollHeight, client: el.clientHeight });
+    return {
+      dialog: box(document.getElementById('archive')),
+      list: box(document.getElementById('archive-list')),
+      page: box(document.documentElement),
+    };
+  });
+  expect(sizes.list.scroll).toBeGreaterThan(sizes.list.client);
+  expect(sizes.dialog.scroll).toBeLessThanOrEqual(sizes.dialog.client);
+  expect(sizes.page.scroll).toBeLessThanOrEqual(sizes.page.client);
+
+  // The last row can be scrolled into view and fits inside the dialog.
+  const last = archiveRows(page).last();
+  await last.scrollIntoViewIfNeeded();
+  const dialogBox = await page.locator('#archive').boundingBox();
+  const lastBox = await last.boundingBox();
+  expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(dialogBox.y + dialogBox.height + 1);
 });
