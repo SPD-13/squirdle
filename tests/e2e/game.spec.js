@@ -153,3 +153,23 @@ test('the puzzle switches at 6 AM Eastern, not midnight', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.row')).toHaveCount(answerOn(2).length + 1);
 });
+
+test('a puzzle started before 6 AM can be finished after it', async ({ page }) => {
+  // Opened at 05:50 EDT on day 1; the clock then runs past the 06:00 rollover.
+  await page.clock.install({ time: new Date('2026-10-05T09:50:00Z') });
+  await page.goto('/');
+  const answer = answerOn(1);
+  await expect(page.locator('.row')).toHaveCount(answer.length + 1);
+
+  const guess = wrongGuess(answer);
+  await typeGuess(page, guess);
+  await expectRowRevealed(page, 0, guess);
+
+  await page.clock.fastForward('20:00');
+  await expect(page.locator('.row')).toHaveCount(answer.length + 1);
+  await expectRowRevealed(page, 0, guess);
+
+  await typeGuess(page, answer);
+  await expectRowRevealed(page, 1, answer);
+  await expect(toast(page, /./)).toBeVisible();
+});

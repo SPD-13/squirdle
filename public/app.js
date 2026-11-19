@@ -319,17 +319,6 @@ function bindInput() {
   });
 }
 
-// Reload when the puzzle rolls over at 6 AM Eastern while the page is open.
-function watchForNewDay() {
-  const check = () => {
-    if (!game.busy && dayIndex() !== game.day) location.reload();
-  };
-  setInterval(check, 60 * 1000);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') check();
-  });
-}
-
 async function init() {
   buildKeyboard();
   bindInput();
@@ -359,7 +348,6 @@ async function init() {
   game.guesses.forEach((_, r) => renderSubmittedRow(r));
   renderKeyboard();
   if (game.over) showResult(game.guesses.length - 1, false);
-  watchForNewDay();
 }
 
 init();
