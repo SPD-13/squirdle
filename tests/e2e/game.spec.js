@@ -142,7 +142,7 @@ test('progress is kept on reload and reset on the next day', async ({ page }) =>
   await expect(page.locator('.row').first().locator('.tile')).toHaveCount(nextAnswer.length);
 });
 
-test('the puzzle switches at 6 AM Eastern, not midnight', async ({ page }) => {
+test('the puzzle switches at 6 AM, not midnight (Eastern)', async ({ page }) => {
   // 2026-10-05 05:59 EDT is still day 1; 06:00 EDT is day 2 (different word lengths).
   expect(answerOn(1).length).not.toBe(answerOn(2).length);
   await page.clock.setFixedTime(new Date('2026-10-05T09:59:00Z'));
@@ -152,6 +152,22 @@ test('the puzzle switches at 6 AM Eastern, not midnight', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-05T10:00:00Z'));
   await page.goto('/');
   await expect(page.locator('.row')).toHaveCount(answerOn(2).length + 1);
+});
+
+test.describe('in Tokyo', () => {
+  test.use({ timezoneId: 'Asia/Tokyo' });
+
+  test('the puzzle switches at 6 AM local time', async ({ page }) => {
+    // 2026-10-05 05:59 JST is still day 1; 06:00 JST is day 2. Both are mid-afternoon
+    // of Oct 4 in New York, where it would still be day 1.
+    await page.clock.setFixedTime(new Date('2026-10-04T20:59:00Z'));
+    await page.goto('/');
+    await expect(page.locator('.row')).toHaveCount(answerOn(1).length + 1);
+
+    await page.clock.setFixedTime(new Date('2026-10-04T21:00:00Z'));
+    await page.goto('/');
+    await expect(page.locator('.row')).toHaveCount(answerOn(2).length + 1);
+  });
 });
 
 test('a puzzle started before 6 AM can be finished after it', async ({ page }) => {

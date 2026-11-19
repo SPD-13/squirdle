@@ -2,9 +2,8 @@
 
 // Changing either constant (or the contents of words.txt) changes the whole schedule.
 export const SEED = 20261003;
-// Calendar date (in Eastern time) whose 6 AM starts day index 0.
+// Calendar date whose 6 AM (in the player's own time zone) starts day index 0.
 export const EPOCH = { year: 2026, month: 10, day: 3 };
-export const TIME_ZONE = 'America/New_York';
 export const ROLLOVER_HOUR = 6;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -39,20 +38,34 @@ export function seededShuffle(items, seed = SEED) {
   return out;
 }
 
-const etFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: TIME_ZONE,
-  year: 'numeric',
-  month: 'numeric',
-  day: 'numeric',
-  hour: 'numeric',
-  hourCycle: 'h23',
-});
+// The player's IANA time zone, e.g. "Europe/Paris".
+export function localTimeZone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
 
-// Number of 6 AM Eastern rollovers between the epoch and `now`. Uses the
-// Eastern wall clock, so the switch stays at 6 AM local time across DST.
-export function dayIndex(now = new Date()) {
+const formatters = new Map();
+function wallClockFormatter(timeZone) {
+  let f = formatters.get(timeZone);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      hourCycle: 'h23',
+    });
+    formatters.set(timeZone, f);
+  }
+  return f;
+}
+
+// Number of 6 AM rollovers between the epoch and `now`, on the wall clock of
+// `timeZone` (the player's own by default), so the switch stays at 6 AM local
+// time across DST.
+export function dayIndex(now = new Date(), timeZone = localTimeZone()) {
   const parts = {};
-  for (const p of etFormatter.formatToParts(now)) parts[p.type] = Number(p.value);
+  for (const p of wallClockFormatter(timeZone).formatToParts(now)) parts[p.type] = Number(p.value);
   let day = Date.UTC(parts.year, parts.month - 1, parts.day);
   if (parts.hour < ROLLOVER_HOUR) day -= DAY_MS;
   const epoch = Date.UTC(EPOCH.year, EPOCH.month - 1, EPOCH.day);

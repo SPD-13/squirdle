@@ -5,6 +5,7 @@ import {
   answerForDay,
   dayIndex,
   keyStates,
+  localTimeZone,
   maxGuesses,
   mulberry32,
   parseWords,
@@ -40,22 +41,42 @@ test('seededShuffle is a stable permutation', () => {
   assert.equal(words[0], 'BULBASAUR', 'input array must not be mutated');
 });
 
-test('day index switches at 6 AM Eastern', () => {
+const ET = 'America/New_York';
+
+test('day index switches at 6 AM in the given time zone (Eastern)', () => {
   // EDT (UTC-4)
-  assert.equal(dayIndex(new Date('2026-10-03T09:59:59Z')), -1); // 05:59:59 EDT
-  assert.equal(dayIndex(new Date('2026-10-03T10:00:00Z')), 0); // 06:00 EDT
-  assert.equal(dayIndex(new Date('2026-10-04T03:59:59Z')), 0); // 23:59 EDT
-  assert.equal(dayIndex(new Date('2026-10-04T05:00:00Z')), 0); // 01:00 EDT next day
-  assert.equal(dayIndex(new Date('2026-10-05T10:00:00Z')), 2);
+  assert.equal(dayIndex(new Date('2026-10-03T09:59:59Z'), ET), -1); // 05:59:59 EDT
+  assert.equal(dayIndex(new Date('2026-10-03T10:00:00Z'), ET), 0); // 06:00 EDT
+  assert.equal(dayIndex(new Date('2026-10-04T03:59:59Z'), ET), 0); // 23:59 EDT
+  assert.equal(dayIndex(new Date('2026-10-04T05:00:00Z'), ET), 0); // 01:00 EDT next day
+  assert.equal(dayIndex(new Date('2026-10-05T10:00:00Z'), ET), 2);
 });
 
 test('day index follows DST transitions', () => {
   // DST ends 2026-11-01: 6 AM is now EST (UTC-5) = 11:00Z
-  assert.equal(dayIndex(new Date('2026-11-01T10:59:59Z')), 28);
-  assert.equal(dayIndex(new Date('2026-11-01T11:00:00Z')), 29);
+  assert.equal(dayIndex(new Date('2026-11-01T10:59:59Z'), ET), 28);
+  assert.equal(dayIndex(new Date('2026-11-01T11:00:00Z'), ET), 29);
   // DST starts 2027-03-14: 6 AM EDT = 10:00Z
-  assert.equal(dayIndex(new Date('2027-03-14T09:59:59Z')), 161);
-  assert.equal(dayIndex(new Date('2027-03-14T10:00:00Z')), 162);
+  assert.equal(dayIndex(new Date('2027-03-14T09:59:59Z'), ET), 161);
+  assert.equal(dayIndex(new Date('2027-03-14T10:00:00Z'), ET), 162);
+});
+
+test('day index rolls over at 6 AM local time in other zones', () => {
+  // Tokyo (UTC+9, no DST): 6 AM on 2026-10-03 is 2026-10-02T21:00Z.
+  assert.equal(dayIndex(new Date('2026-10-02T20:59:59Z'), 'Asia/Tokyo'), -1);
+  assert.equal(dayIndex(new Date('2026-10-02T21:00:00Z'), 'Asia/Tokyo'), 0);
+  // Los Angeles (UTC-7 in October): 6 AM is 13:00Z.
+  assert.equal(dayIndex(new Date('2026-10-03T12:59:59Z'), 'America/Los_Angeles'), -1);
+  assert.equal(dayIndex(new Date('2026-10-03T13:00:00Z'), 'America/Los_Angeles'), 0);
+  // At the same instant, players in different zones can be on different days.
+  const instant = new Date('2026-10-10T00:00:00Z'); // Oct 10 09:00 Tokyo, Oct 9 17:00 LA
+  assert.equal(dayIndex(instant, 'Asia/Tokyo'), 7);
+  assert.equal(dayIndex(instant, 'America/Los_Angeles'), 6);
+});
+
+test('day index defaults to the local time zone', () => {
+  const now = new Date('2026-11-19T12:00:00Z');
+  assert.equal(dayIndex(now), dayIndex(now, localTimeZone()));
 });
 
 test('answerForDay wraps in both directions', () => {

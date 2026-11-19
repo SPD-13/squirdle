@@ -23,6 +23,8 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL: `http://localhost:${PORT}`,
+    // The rollover follows the browser's zone; pin it so test times are predictable.
+    timezoneId: 'America/New_York',
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'oneplus-13r', use: onePlus13R }],

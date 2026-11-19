@@ -2,7 +2,7 @@
 
 A daily Wordle-style game where the answer is a Pokémon. Static files in `public/`, served by nginx.
 
-- The day's answer comes from `public/words.txt`, shuffled with a fixed seed. The schedule starts at day 0 = 2026-10-03, and each new day begins at 6 AM Eastern (see `public/logic.js`).
+- The day's answer comes from `public/words.txt`, shuffled with a fixed seed. The schedule starts at day 0 = 2026-10-03, and each new day begins at 6 AM in the player's own time zone (see `public/logic.js`), so players in different zones switch puzzles at different moments.
 - You get name length + 1 guesses, and only Pokémon of the same length count as valid guesses.
 
 Everything runs through Docker; nothing needs to be installed locally.
